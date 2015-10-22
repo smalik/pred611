@@ -6,14 +6,23 @@ library(parallel)
 library(caret)
 library(ggplot2)
 library(tableplot)
+library(DMwR)
+library(unbalanced)
+library(ParallelForest)
+library(penalized)
+library(glmnet)
+library(randomForest)
+library(ROCR)
 
 # Set R to leverage 14 of the 16 cores available
-doMC::registerDoMC(cores = 14)
-cl <- makeCluster(14)
+doMC::registerDoMC(cores = 4)
+cl <- makeCluster(4)
 registerDoParallel(cl)
 
 # Source the data in and create target variables for classification analysis
 ds <- read.csv(file = "~/analytics/pred611/data/KPI_QOE_AUG.csv" , header = TRUE, sep = ',', stringsAsFactors = FALSE)
+nrows <- dim(ds)[1]
+ncols <- dim(ds)[2]-5
 attach(ds)
 table(ds, useNA = 'always')
 dim(ds)
@@ -24,25 +33,176 @@ tmp <- as.data.frame(tmp)
 names(tmp) <- c('Care', 'LNP', 'Non611', 'Other', 'Tech')
 
 # What is the mean  of 611 incidents per disposition?
-laply(tmp[,c('Care', 'LNP', 'Non611', 'Other', 'Tech')], sum, .parallel = TRUE)
-laply(tmp[,c('Care', 'LNP', 'Non611', 'Other', 'Tech')], mean, .parallel = TRUE)*100 # expressed as pct
+laply(tmp[,c('Care', 'LNP', 'Non611', 'Other', 'Tech')], sum, .parallel = TRUE) # (56422      200 11490568      352    11650)
+laply(tmp[,c('Care', 'LNP', 'Non611', 'Other', 'Tech')], mean, .parallel = TRUE)*100 # expressed as pct::  (0.48799094  0.00172979 99.38132346  0.00304443  0.10076024)
 
 # Generate new target variable from dummy matrix
-targetVar_cnt     <- rep(0, dim(tmp)[1])
-targetVar_binary  <- rep(0, dim(tmp)[1])
+targetVar_cnt     <- rep(0, nrows)
+targetVar_binary  <- rep(0, nrows)
+
+# Variable for count data modeling
 targetVar_cnt     <- parRapply(cl, tmp[, -c(3)], sum)
+
+# Variable for dichotomous response model
 targetVar_binary  <- parRapply(cl, tmp[, -c(3)], max)
 
-for (i in 1:dim(tmp)[1]) {
-#   targetVar_cnt[i] <- sum(tmp[i,-c(3)])
-  targetVar_cnt[i] <- max(tmp[i,-c(3)])
-}
+# Check counts
 table(targetVar_cnt)
 table(targetVar_binary)
 
+# Counts dont line up...why?
+#     targetVar_binary
+#     0           1 
+#     11493476    68624 
+#     
+#     targetVar_cnt   //Not useful.  No counts
+#     0           1 
+#     11493476    68624 
+
+# Checking for why:
+foreach(1:ncols) %dopar% { x<- sum(tmp[i,]); if(x>1) print(i)}  # All rows sum to 1.  No mistake here
+foreach(i:length(targetVar_cnt)) %dopar% {if(targetVar_binary[i]>1) print(i)} # All rows are 0/1.  No mistake here
+
+# Lets plot new target variables
+boxplot(targetVar_binary)
+
+
+# Summary statistics and density plots on columns w.r.t target variable
+foreach(i = 1:2) %do% {
+  print(paste0(i, "- Variable name: ", names(ds)[i]))
+  print("------------------------------------------------------")
+  s <- summary(ds[,i])
+  print(s)
+  print("------------------------------------------------------")
+  if (s[6] > 1) {
+    dat <- data.frame(col1= ds[,i], col2=targetVar_binary)
+    ggplot(dat, aes(x=dat[,1])) + geom_density(aes(group=targetVar_binary, colour=targetVar_binary, fill=targetVar_binary), alpha=0.3) 
+  }
+}
+
+
+#   Variables that need recoding or alternative handling
+# 
+#     P168_PCT_ATTACH_FAILURE
+#     P168_PCT_PDN_FAILURE
+#     P24_PCT_ATTACH_FAILURE
+#     P24_PCT_PDN_FAILURE
+ds[is.na(ds[, c('P168_PCT_ATTACH_FAILURE')]), c('P168_PCT_ATTACH_FAILURE')] <- 0
+ds[is.na(ds[, c('P168_PCT_PDN_FAILURE')]), c('P168_PCT_PDN_FAILURE')]    <- 0
+ds[is.na(ds[, c('P24_PCT_ATTACH_FAILURE')]), c('P24_PCT_ATTACH_FAILURE')]  <- 0
+ds[is.na(ds[, c('P24_PCT_PDN_FAILURE')]), c('P24_PCT_PDN_FAILURE')]     <- 0
 
 # Join dummy variable dataset onto feature set
-ds <- cbind(ds, tmp)
+target  <- targetVar_binary
+ds    <- cbind(ds, tmp, target)
 dim(ds)
+names(ds)
+rm(dat, tmp)
 
-# Summary statistics on columns
+
+# Transformations
+
+# Variables from Adi's model
+allCols       <- names(ds)
+modelVars.adi <- c('P168_PCT_PDN_FAILURE', 'P24_PCT_LTE_FAILURE', 'P24_PCT_ATTACH_FAILURE', 'P24_PCT_PDN_FAILURE', 'P168_PCT_SF_OR_FAILURE', 'P168_PCT_FAILURE', 'P168_PCT_CELL_FAILURE', 'P168_PCT_SWITCH_FAILURE', 'P168_PCT_COVERAGE_FAILURE', 'P24_PCT_SF_OR_FAILURE', 'P24_PCT_FAILURE', 'P24_PCT_CELL_FAILURE', 'P24_PCT_SWITCH_FAILURE', 'P24_PCT_COVERAGE_FAILURE', 'target')
+modelVars.PCT <- c(allCols[grepl("PCT", allCols)], 'target')
+  
+# Split dataset into test & train
+set.seed(3456)
+trainIndex <- createDataPartition(ds$target, p = 0.55, list = FALSE, times = 1)  # the data is too large to compute partitions on, upsample, etc...
+head(trainIndex)
+
+trainSplit  <- ds[ trainIndex, c(1:95, 104)]
+events      <- subset(ds, target == 1)
+nonevents   <- subset(trainSplit, target == 0)
+rownames(events) <- 1:dim(events)[1]
+rownames(nonevents) <- 1:dim(nonevents)[1]
+train.all   <- rbind(events, nonevents[sample(1:dim(events)[1]),])
+prop.table(table(train.all$target)) # Should be a 50/50 split
+
+testSplit   <- ds[-trainIndex[, c(1:95, 104)]
+
+# Adi Final Model list 
+set.seed(1223)
+n = 5000
+events.adi    <- events[sample(1:n), modelVars.PCT]
+nonevents.adi <- nonevents[sample(1:n), modelVars.PCT]
+train.adi     <- rbind(events.adi, nonevents.adi)
+prop.table(table(events.adi$target, useNA='always'))
+prop.table(table(nonevents.adi$target, useNA='always'))
+prop.table(table(train.adi$target, useNA='always')) # Should be a 50/50 split
+
+
+
+#rf_adi.5k <- randomForest(as.factor(target) ~. , data=train.adi, importance=TRUE, proximity=TRUE)  # Accuracy rate of 62%
+rf_adi.10k <- randomForest(as.factor(target) ~. , data=train.adi, importance=TRUE, proximity=TRUE)
+
+
+#train.k10   <- createFolds(trainSplit, k=10, FALSE)
+
+prop.table(table(trainSplit$target))
+prop.table(table(testSplit$target))
+
+# Oversample on training set
+trainSplit$target.factor <- as.factor(trainSplit$target)
+trainSplit <- SMOTE(target.factor ~ ., trainSplit, perc.over = 200, perc.under= 200)
+prop.table(table(trainSplit$target))
+
+
+# Generate S-Curves by response class
+getSCurve <- function(rf) {
+  results <- data.frame(conf=rf$votes[,1]*4+1, CALLED_611= rf$y)
+  n=nrow(results)/2
+  print(n)
+  no    <- data.frame(pctile = (1:n)/100, Called_611= rep('No', n), qoe=sort(results$conf[results$CALLED_611 == 0]))
+  yes   <- data.frame(pctile = (1:n)/100, Called_611= rep('Yes', n), qoe=sort(results$conf[results$CALLED_611 == 1]))
+  df_gg <- rbind(yes, no)
+  p     <- ggplot(data=df_gg, aes(x=pctile, y=qoe, group=Called_611)) + geom_line(aes(colour=Called_611)) + scale_x_continuous(breaks=round(seq(0,100, by=5))) + scale_y_continuous(breaks=seq(-1,6, by=0.5))
+  print(p) 
+}
+
+##  Modeling phase
+
+model.forest <- 
+
+
+# Generate training samples
+events0 <- subset(ds, target == 1)
+events  <- events0
+
+foreach (i=1:50) %do% {
+  sampled_events  <- events0[sample(1:dim(events0)[1], 1500),]
+  events          <- rbind(events, sampled_events)
+}
+
+# Oversample event dataset
+events$samplingIndex  <- runif(dim(events)[1])
+
+
+nonevents             <- subset(ds, target == 0)  # no need to oversample this set
+nonevents$samplingIndex  <- runif(dim(nonevents)[1])
+print(paste0("Dimensions of Event ds: ", dim(events)))
+print(paste0("Dimensions of Non-Event ds: ", dim(nonevents)))
+
+# Does the random number distrubution look ok?
+plot(density(events$samplingIndex),  main = "Distribution of random numbers over Event set")
+plot(density(nonevents$samplingIndex),  main = "Distribution of random numbers over Non-event set")
+
+train_event     <- 
+train_nonevent  <- 1
+  
+test_event      <- 1
+test_nonevent   <- 1
+
+train_ds        <- rbind(train_event, train_nonevent)
+test_ds         <- rbind(test_event, test_nonevent)
+
+
+
+
+
+
+
+
+
+
