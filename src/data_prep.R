@@ -19,6 +19,11 @@ doMC::registerDoMC(cores = 4)
 cl <- makeCluster(4)
 registerDoParallel(cl)
 
+# Get device data
+dev <- read.csv(file='~/analytics/pred611/data/export_Dev.csv', header=TRUE, sep=',', stringsAsFactors = FALSE)
+dev <- dev[,1:3]
+colnames(dev)[1] <- 'DEVICE_KEY'
+
 # Source the data in and create target variables for classification analysis
 ds <- read.csv(file = "~/analytics/pred611/data/KPI_QOE_AUG.csv" , header = TRUE, sep = ',', stringsAsFactors = FALSE)
 nrows <- dim(ds)[1]
@@ -104,6 +109,7 @@ rm(dat, tmp)
 
 # Variables from Adi's model
 allCols       <- names(ds)
+idVars        <- c('CUSTOMER_KEY', 'DEVICE_KEY', 'CELL_KEY')
 modelVars.adi <- c('P168_PCT_PDN_FAILURE', 'P24_PCT_LTE_FAILURE', 'P24_PCT_ATTACH_FAILURE', 'P24_PCT_PDN_FAILURE', 'P168_PCT_SF_OR_FAILURE', 'P168_PCT_FAILURE', 'P168_PCT_CELL_FAILURE', 'P168_PCT_SWITCH_FAILURE', 'P168_PCT_COVERAGE_FAILURE', 'P24_PCT_SF_OR_FAILURE', 'P24_PCT_FAILURE', 'P24_PCT_CELL_FAILURE', 'P24_PCT_SWITCH_FAILURE', 'P24_PCT_COVERAGE_FAILURE', 'target')
 modelVars.PCT <- c(allCols[grepl("PCT", allCols)], 'target')
   
@@ -112,7 +118,7 @@ set.seed(3456)
 trainIndex <- createDataPartition(ds$target, p = 0.55, list = FALSE, times = 1)  # the data is too large to compute partitions on, upsample, etc...
 head(trainIndex)
 
-trainSplit  <- ds[ trainIndex, c(1:95, 104)]
+trainSplit  <- ds[ trainIndex,]
 events      <- subset(ds, target == 1)
 nonevents   <- subset(trainSplit, target == 0)
 rownames(events) <- 1:dim(events)[1]
@@ -123,20 +129,29 @@ prop.table(table(train.all$target)) # Should be a 50/50 split
 testSplit   <- ds[-trainIndex[, c(1:95, 104)]
 
 # Adi Final Model list 
-set.seed(1223)
-n = 5000
-events.adi    <- events[sample(1:n), modelVars.PCT]
-nonevents.adi <- nonevents[sample(1:n), modelVars.PCT]
+set.seed(434567)
+n = 2500
+sample.event     <- sample(1:n) 
+sample.nonevent  <- sample(1:n)
+ind <- sample.event
+events.adi    <- cbind(events[sample.event, c(modelVars.PCT, idVars)], ind)
+ind <- sample.nonevent
+nonevents.adi <- cbind(nonevents[sample.nonevent, c(modelVars.PCT, idVars)], ind)
 train.adi     <- rbind(events.adi, nonevents.adi)
 prop.table(table(events.adi$target, useNA='always'))
 prop.table(table(nonevents.adi$target, useNA='always'))
 prop.table(table(train.adi$target, useNA='always')) # Should be a 50/50 split
 
+##  Modeling phase
 
+# Random Forest model following Adi's specification.  Tree size is 500.
+# With 5000 samples
+# Results : Accuracy ~ 
+rf_adi.5k <- randomForest(as.factor(target) ~. , data=train.adi[, -c(18:21)], importance=TRUE, proximity=TRUE)  # Accuracy rate of 62%, 81% 
+sum(rf_adi.5k$confusion[c(1,4)])/sum(rf_adi.5k$confusion)
 
-#rf_adi.5k <- randomForest(as.factor(target) ~. , data=train.adi, importance=TRUE, proximity=TRUE)  # Accuracy rate of 62%
-rf_adi.10k <- randomForest(as.factor(target) ~. , data=train.adi, importance=TRUE, proximity=TRUE)
-
+# With 10k samples
+rf_adi.10k <- randomForest(as.factor(target) ~. , data=train.adi, importance=TRUE, proximity=TRUE) # Accuracy rate of 76%
 
 #train.k10   <- createFolds(trainSplit, k=10, FALSE)
 
@@ -159,50 +174,21 @@ getSCurve <- function(rf) {
   df_gg <- rbind(yes, no)
   p     <- ggplot(data=df_gg, aes(x=pctile, y=qoe, group=Called_611)) + geom_line(aes(colour=Called_611)) + scale_x_continuous(breaks=round(seq(0,100, by=5))) + scale_y_continuous(breaks=seq(-1,6, by=0.5))
   print(p) 
-}
-
-##  Modeling phase
-
-model.forest <- 
-
-
-# Generate training samples
-events0 <- subset(ds, target == 1)
-events  <- events0
-
-foreach (i=1:50) %do% {
-  sampled_events  <- events0[sample(1:dim(events0)[1], 1500),]
-  events          <- rbind(events, sampled_events)
-}
-
-# Oversample event dataset
-events$samplingIndex  <- runif(dim(events)[1])
-
-
-nonevents             <- subset(ds, target == 0)  # no need to oversample this set
-nonevents$samplingIndex  <- runif(dim(nonevents)[1])
-print(paste0("Dimensions of Event ds: ", dim(events)))
-print(paste0("Dimensions of Non-Event ds: ", dim(nonevents)))
-
-# Does the random number distrubution look ok?
-plot(density(events$samplingIndex),  main = "Distribution of random numbers over Event set")
-plot(density(nonevents$samplingIndex),  main = "Distribution of random numbers over Non-event set")
-
-train_event     <- 
-train_nonevent  <- 1
   
-test_event      <- 1
-test_nonevent   <- 1
+  return(results)
+}
 
-train_ds        <- rbind(train_event, train_nonevent)
-test_ds         <- rbind(test_event, test_nonevent)
+# Merge device ID onto QOE result set
+results <- getSCurve(rf_adi.5k)
+device_qoe <- cbind(results, train.adi[,c(18:20)])
+device_qoe <- merge(x=device_qoe, y=dev, by='DEVICE_KEY', all.x=TRUE)
+
+# Take a look at counts of devices
+sort(table(device_qoe$DEVICE_KEY), descending=TRUE)
+sort(table(device_qoe$MANUFACTURER), decreasing=TRUE)
+sort(table(device_qoe$BRAND_MODEL), decreasing=TRUE)
 
 
+# Draw device hotspot plots
 
-
-
-
-
-
-
-
+# Calculate rate of 611: Number of 611 calls from device/ total count of device
