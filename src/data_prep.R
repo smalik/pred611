@@ -129,20 +129,36 @@ prop.table(table(train.all$target)) # Should be a 50/50 split
 testSplit   <- ds[-trainIndex[, c(1:95, 104)]
 
 # Adi Final Model list 
-set.seed(434567)
-n = 2500
-sample.event     <- sample(1:n) 
-sample.nonevent  <- sample(1:n)
-ind <- sample.event
-events.adi    <- cbind(events[sample.event, c(modelVars.PCT, idVars)], ind)
-ind <- sample.nonevent
-nonevents.adi <- cbind(nonevents[sample.nonevent, c(modelVars.PCT, idVars)], ind)
-train.adi     <- rbind(events.adi, nonevents.adi)
-prop.table(table(events.adi$target, useNA='always'))
-prop.table(table(nonevents.adi$target, useNA='always'))
-prop.table(table(train.adi$target, useNA='always')) # Should be a 50/50 split
+# set.seed(434567)
+# n = 2500
+# sample.event     <- sample(1:n) 
+# sample.nonevent  <- sample(1:n)
+# ind <- sample.event
+# events.adi    <- cbind(events[sample.event, c(modelVars.PCT, idVars)], ind)
+# ind <- sample.nonevent
+# nonevents.adi <- cbind(nonevents[sample.nonevent, c(modelVars.PCT, idVars)], ind)
+# train.adi     <- rbind(events.adi, nonevents.adi)
 
 ##  Modeling phase
+
+getModelFrame <- function(sampleN, events_ds=events, nonevents_ds=nonevents, model_Vars, id_Vars=idVars) {
+  n <- sampleN
+  sample.event     <- sample(1:n) 
+  sample.nonevent  <- sample(1:n)
+  ind              <- sample.event
+  events.1         <- cbind(events_ds[sample.event, c(model_Vars, id_Vars)], ind)
+  ind              <- sample.nonevent
+  nonevents.0      <- cbind(nonevents_ds[sample.nonevent, c(model_Vars, id_Vars)], ind)
+  train            <- rbind(events.1, nonevents.0)
+
+  print(prop.table(table(events.adi$target, useNA='always')))
+  print(prop.table(table(nonevents.adi$target, useNA='always')))
+  print(prop.table(table(train.adi$target, useNA='always'))) # Should be a 50/50 split
+  
+  return(train)
+}
+
+ts <- getModelFrame(sampleN=20000, model_Vars=modelVars.PCT)
 
 # Random Forest model following Adi's specification.  Tree size is 500.
 # With 5000 samples
@@ -152,11 +168,11 @@ sum(rf_adi.5k$confusion[c(1,4)])/sum(rf_adi.5k$confusion)
 
 # With 10k samples
 rf_adi.10k <- randomForest(as.factor(target) ~. , data=train.adi, importance=TRUE, proximity=TRUE) # Accuracy rate of 76%
+sum(rf_adi.10k$confusion[c(1,4)])/sum(rf_adi.10k$confusion)
 
-#train.k10   <- createFolds(trainSplit, k=10, FALSE)
-
-prop.table(table(trainSplit$target))
-prop.table(table(testSplit$target))
+# With 20k samples
+rf_adi.20k <- randomForest(as.factor(target) ~. , data=ts[,-c(18:21)], importance=TRUE, proximity=TRUE) # Accuracy rate of ??
+sum(rf_adi.20k$confusion[c(1,4)])/sum(rf_adi.20k$confusion)
 
 # Oversample on training set
 trainSplit$target.factor <- as.factor(trainSplit$target)
@@ -179,9 +195,26 @@ getSCurve <- function(rf) {
 }
 
 # Merge device ID onto QOE result set
-results <- getSCurve(rf_adi.5k)
+results <- getSCurve(rf_adi.10k)
 device_qoe <- cbind(results, train.adi[,c(18:20)])
+device_qoe$is611 <- as.numeric(as.character(device_qoe$CALLED_611))
 device_qoe <- merge(x=device_qoe, y=dev, by='DEVICE_KEY', all.x=TRUE)
+device_qoe <- ddply(device_qoe, c('MANUFACTURER', 'BRAND_MODEL'), summarise, NCalls=length(CALLED_611), mean.qoe=mean(conf), sd.qoe=sd(conf))
+
+
+device_all <- ds[,c(95,104)]
+device_all <- merge(x=device_all, y=dev, by='DEVICE_KEY', all.x=TRUE)
+device_all <- ddply(device_all, c('MANUFACTURER', 'BRAND_MODEL'), summarise, tot.dev=NROW(target), tot.611=sum(target))
+device_all$rate611 <- 100*(device_all$tot.611/device_all$tot.dev)
+
+device_plot <- merge(x=device_qoe, y=device_all[,c('MANUFACTURER', 'BRAND_MODEL', 'rate611')], by=c('MANUFACTURER', 'BRAND_MODEL'), all.x=TRUE)
+
+# Bubble plot of QOE by rate of 611, with total device calls as magnitude
+p <- ggplot(device_plot, aes(x=mean.qoe, y=rate611)) + geom_point(aes(size=NCalls)) + scale_size_continuous(range=c(0,100)) + theme(legend.position = "top") + theme(panel.background = element_rect(colour = "pink"))
+p <- ggplot(device_plot, aes(x=mean.qoe, y=rate611)) + geom_point(aes(size=NCalls)) + theme(legend.position = "top") + theme(panel.background = element_rect(colour = "pink"))
+print(p)
+
+
 
 # Take a look at counts of devices
 sort(table(device_qoe$DEVICE_KEY), descending=TRUE)
@@ -192,3 +225,4 @@ sort(table(device_qoe$BRAND_MODEL), decreasing=TRUE)
 # Draw device hotspot plots
 
 # Calculate rate of 611: Number of 611 calls from device/ total count of device
+device_hotspot <- summaryBy(conf ~ MANUFACTURER + BRAND_MODEL, data=device_qoe, FUN=function(x) {c(avg=mean(x), tot=sum(x), cnt=NROW(x))})
