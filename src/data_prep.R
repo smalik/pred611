@@ -195,7 +195,9 @@ getSCurve <- function(rf) {
 }
 
 # Merge device ID onto QOE result set
-results <- getSCurve(rf_adi.10k)
+results.5 <- getSCurve(rf_adi.5k)
+results.10 <- getSCurve(rf_adi.10k)
+results.20 <- getSCurve(rf_adi.20k)
 device_qoe <- cbind(results, train.adi[,c(18:20)])
 device_qoe$is611 <- as.numeric(as.character(device_qoe$CALLED_611))
 device_qoe <- merge(x=device_qoe, y=dev, by='DEVICE_KEY', all.x=TRUE)
@@ -208,12 +210,20 @@ device_all <- ddply(device_all, c('MANUFACTURER', 'BRAND_MODEL'), summarise, tot
 device_all$rate611 <- 100*(device_all$tot.611/device_all$tot.dev)
 
 device_plot <- merge(x=device_qoe, y=device_all[,c('MANUFACTURER', 'BRAND_MODEL', 'rate611')], by=c('MANUFACTURER', 'BRAND_MODEL'), all.x=TRUE)
+device_plot <- device_plot[-c(9,34,81,84:85,87,90),]
 
 # Bubble plot of QOE by rate of 611, with total device calls as magnitude
-p <- ggplot(device_plot, aes(x=mean.qoe, y=rate611)) + geom_point(aes(size=NCalls)) + scale_size_continuous(range=c(0,100)) + theme(legend.position = "top") + theme(panel.background = element_rect(colour = "pink"))
-p <- ggplot(device_plot, aes(x=mean.qoe, y=rate611)) + geom_point(aes(size=NCalls)) + theme(legend.position = "top") + theme(panel.background = element_rect(colour = "pink"))
+p <- ggplot(device_plot.1, aes(y=mean.qoe, x=rate611)) + geom_point(aes(size=NCalls)) + scale_size_continuous(range=c(0,100)) + scale_x_continuous(name= "Rate of 611 calls per device type", limits=c(0,2)) + scale_y_continuous(name= "Average Quality of Experience per device type", limits=c(0,10)) + theme(legend.position = "none") + theme(panel.background = element_rect(colour = "pink"))
 print(p)
+p + geom_abline(intercept=coef(lm(mean.qoe ~ rate611, data=device_plot.1))[1], slope=coef(lm(mean.qoe ~ rate611, data=device_plot))[2])
 
+
+device_plot$radius <-sqrt(device_plot$NCalls/pi)
+p <- ggplot(subset(device_plot, NCalls > 15), aes(y=mean.qoe, x=rate611, label=BRAND_MODEL, alpha=0.7)) + geom_point(aes(colour=NCalls, size=NCalls)) +  geom_text(vjust=1, hjust = 1, size = 5, angle=0) + scale_size_area(max_size = 50) + scale_x_continuous(name= "Rate of 611 calls per device type", limits=c(-0.5,1.5)) + scale_y_continuous(name= "Average Quality of Experience per device type", limits=c(2.75,4)) + theme(legend.position = "none")+ theme(panel.background = element_rect(colour = "pink")) + theme(legend.position = 'none') + guides(fill = guide_legend(keywidth = 9, keyheight = 3))
+print(p + ggtitle("Verizon Wireless QOE by device type") + theme(plot.title = element_text(size=20, face="bold")))
+p1 <- ggplot(subset(device_plot, NCalls > 15), aes(y=mean.qoe, x=rate611, label=BRAND_MODEL, alpha=0.7)) + geom_point(aes(colour=NCalls, size=NCalls)) +  geom_text(vjust=1, hjust = 1, size = 5, angle=0) + scale_size_area(max_size = 50) + scale_x_continuous(name= "Rate of 611 calls per device type", limits=c(-0.5,8)) + scale_y_continuous(name= "Average Quality of Experience per device type", limits=c(2,4.5)) + theme(legend.position = "none")+ theme(panel.background = element_rect(colour = "pink")) + theme(legend.position = 'none') + guides(fill = guide_legend(keywidth = 9, keyheight = 3))
+print(p1 + ggtitle("Verizon Wireless QOE by device type") + theme(plot.title = element_text(size=20, face="bold")))
+p + geom_abline(intercept=coef(lm(mean.qoe ~ rate611, data=device_plot))[1], slope=coef(lm(mean.qoe ~ rate611, data=device_plot))[2])
 
 
 # Take a look at counts of devices
