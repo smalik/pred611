@@ -112,7 +112,8 @@ allCols       <- names(ds)
 idVars        <- c('CUSTOMER_KEY', 'DEVICE_KEY', 'CELL_KEY')
 modelVars.adi <- c('P168_PCT_PDN_FAILURE', 'P24_PCT_LTE_FAILURE', 'P24_PCT_ATTACH_FAILURE', 'P24_PCT_PDN_FAILURE', 'P168_PCT_SF_OR_FAILURE', 'P168_PCT_FAILURE', 'P168_PCT_CELL_FAILURE', 'P168_PCT_SWITCH_FAILURE', 'P168_PCT_COVERAGE_FAILURE', 'P24_PCT_SF_OR_FAILURE', 'P24_PCT_FAILURE', 'P24_PCT_CELL_FAILURE', 'P24_PCT_SWITCH_FAILURE', 'P24_PCT_COVERAGE_FAILURE', 'target')
 modelVars.PCT <- c(allCols[grepl("PCT", allCols)], 'target')
-  
+modelVars.PCT_MAX <- c(allCols[grepl("PCT", allCols)], allCols[grepl("MAX", allCols)], 'target')
+
 # Split dataset into test & train
 set.seed(3456)
 trainIndex <- createDataPartition(ds$target, p = 0.55, list = FALSE, times = 1)  # the data is too large to compute partitions on, upsample, etc...
@@ -158,13 +159,16 @@ getModelFrame <- function(sampleN, events_ds=events, nonevents_ds=nonevents, mod
   return(train)
 }
 
-ts <- getModelFrame(sampleN=20000, model_Vars=modelVars.PCT)
+ts <- getModelFrame(sampleN=5000, model_Vars=modelVars.PCT_MAX)
 
 # Random Forest model following Adi's specification.  Tree size is 500.
 # With 5000 samples
 # Results : Accuracy ~ 
 rf_adi.5k <- randomForest(as.factor(target) ~. , data=train.adi[, -c(18:21)], importance=TRUE, proximity=TRUE)  # Accuracy rate of 62%, 81% 
 sum(rf_adi.5k$confusion[c(1,4)])/sum(rf_adi.5k$confusion)
+
+rf_adi.5ak <- randomForest(as.factor(target) ~. , data=train.adi[, -c(18:21)], ntrees=1000, importance=TRUE, proximity=TRUE)  # Accuracy rate of 62%, 81% 
+sum(rf_adi.5ak$confusion[c(1,4)])/sum(rf_adi.5ak$confusion)
 
 # With 10k samples
 rf_adi.10k <- randomForest(as.factor(target) ~. , data=train.adi, importance=TRUE, proximity=TRUE) # Accuracy rate of 76%
@@ -193,46 +197,3 @@ getSCurve <- function(rf) {
   
   return(results)
 }
-
-# Merge device ID onto QOE result set
-results.5 <- getSCurve(rf_adi.5k)
-results.10 <- getSCurve(rf_adi.10k)
-results.20 <- getSCurve(rf_adi.20k)
-device_qoe <- cbind(results, train.adi[,c(18:20)])
-device_qoe$is611 <- as.numeric(as.character(device_qoe$CALLED_611))
-device_qoe <- merge(x=device_qoe, y=dev, by='DEVICE_KEY', all.x=TRUE)
-device_qoe <- ddply(device_qoe, c('MANUFACTURER', 'BRAND_MODEL'), summarise, NCalls=length(CALLED_611), mean.qoe=mean(conf), sd.qoe=sd(conf))
-
-
-device_all <- ds[,c(95,104)]
-device_all <- merge(x=device_all, y=dev, by='DEVICE_KEY', all.x=TRUE)
-device_all <- ddply(device_all, c('MANUFACTURER', 'BRAND_MODEL'), summarise, tot.dev=NROW(target), tot.611=sum(target))
-device_all$rate611 <- 100*(device_all$tot.611/device_all$tot.dev)
-
-device_plot <- merge(x=device_qoe, y=device_all[,c('MANUFACTURER', 'BRAND_MODEL', 'rate611')], by=c('MANUFACTURER', 'BRAND_MODEL'), all.x=TRUE)
-device_plot <- device_plot[-c(9,34,81,84:85,87,90),]
-
-# Bubble plot of QOE by rate of 611, with total device calls as magnitude
-p <- ggplot(device_plot.1, aes(y=mean.qoe, x=rate611)) + geom_point(aes(size=NCalls)) + scale_size_continuous(range=c(0,100)) + scale_x_continuous(name= "Rate of 611 calls per device type", limits=c(0,2)) + scale_y_continuous(name= "Average Quality of Experience per device type", limits=c(0,10)) + theme(legend.position = "none") + theme(panel.background = element_rect(colour = "pink"))
-print(p)
-p + geom_abline(intercept=coef(lm(mean.qoe ~ rate611, data=device_plot.1))[1], slope=coef(lm(mean.qoe ~ rate611, data=device_plot))[2])
-
-
-device_plot$radius <-sqrt(device_plot$NCalls/pi)
-p <- ggplot(subset(device_plot, NCalls > 15), aes(y=mean.qoe, x=rate611, label=BRAND_MODEL, alpha=0.7)) + geom_point(aes(colour=NCalls, size=NCalls)) +  geom_text(vjust=1, hjust = 1, size = 5, angle=0) + scale_size_area(max_size = 50) + scale_x_continuous(name= "Rate of 611 calls per device type", limits=c(-0.5,1.5)) + scale_y_continuous(name= "Average Quality of Experience per device type", limits=c(2.75,4)) + theme(legend.position = "none")+ theme(panel.background = element_rect(colour = "pink")) + theme(legend.position = 'none') + guides(fill = guide_legend(keywidth = 9, keyheight = 3))
-print(p + ggtitle("Verizon Wireless QOE by device type") + theme(plot.title = element_text(size=20, face="bold")))
-p1 <- ggplot(subset(device_plot, NCalls > 15), aes(y=mean.qoe, x=rate611, label=BRAND_MODEL, alpha=0.7)) + geom_point(aes(colour=NCalls, size=NCalls)) +  geom_text(vjust=1, hjust = 1, size = 5, angle=0) + scale_size_area(max_size = 50) + scale_x_continuous(name= "Rate of 611 calls per device type", limits=c(-0.5,8)) + scale_y_continuous(name= "Average Quality of Experience per device type", limits=c(2,4.5)) + theme(legend.position = "none")+ theme(panel.background = element_rect(colour = "pink")) + theme(legend.position = 'none') + guides(fill = guide_legend(keywidth = 9, keyheight = 3))
-print(p1 + ggtitle("Verizon Wireless QOE by device type") + theme(plot.title = element_text(size=20, face="bold")))
-p + geom_abline(intercept=coef(lm(mean.qoe ~ rate611, data=device_plot))[1], slope=coef(lm(mean.qoe ~ rate611, data=device_plot))[2])
-
-
-# Take a look at counts of devices
-sort(table(device_qoe$DEVICE_KEY), descending=TRUE)
-sort(table(device_qoe$MANUFACTURER), decreasing=TRUE)
-sort(table(device_qoe$BRAND_MODEL), decreasing=TRUE)
-
-
-# Draw device hotspot plots
-
-# Calculate rate of 611: Number of 611 calls from device/ total count of device
-device_hotspot <- summaryBy(conf ~ MANUFACTURER + BRAND_MODEL, data=device_qoe, FUN=function(x) {c(avg=mean(x), tot=sum(x), cnt=NROW(x))})
