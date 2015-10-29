@@ -30,7 +30,7 @@ p1 <- ggplot(subset(device_plot, NCalls > 15), aes(y=mean.qoe, x=rate611, label=
 print(p1 + ggtitle("Verizon Wireless QOE by device type") + theme(plot.title = element_text(size=20, face="bold")))
 p + geom_abline(intercept=coef(lm(mean.qoe ~ rate611, data=device_plot))[1], slope=coef(lm(mean.qoe ~ rate611, data=device_plot))[2])
 
-p <- ggplot(subset(device_plot, NCalls > 22), aes(y=log(mean.qoe), x=rate611, label=BRAND_MODEL, alpha=0.7)) + geom_point(aes(colour=NCalls, size=NCalls)) +  geom_text(vjust=1, hjust = 1, size = 5, angle=0) + scale_size_area(max_size = 50) + scale_x_continuous(name= "Rate of 611 calls per device type") + scale_y_continuous(name= "Average Quality of Experience per device type") + theme(legend.position = "none")+ theme(panel.background = element_rect(colour = "pink")) + theme(legend.position = 'none') + guides(fill = guide_legend(keywidth = 9, keyheight = 3)) + stat_smooth(method='lm', level=.25)
+p <- ggplot(subset(device_plot, NCalls > 15), aes(y=(mean.qoe), x=rate611, label=BRAND_MODEL, alpha=0.7)) + geom_point(aes(colour=NCalls, size=NCalls)) +  geom_text(vjust=1, hjust = 1, size = 5, angle=0) + scale_size_area(max_size = 50) + scale_x_continuous(name= "Rate of 611 calls per device type", limits=c(0,2)) + scale_y_continuous(name= "Average Quality of Experience per device type") + theme(legend.position = "none")+ theme(panel.background = element_rect(colour = "pink")) + theme(legend.position = 'none') + guides(fill = guide_legend(keywidth = 9, keyheight = 3)) + stat_smooth(method='lm', level=.95)
 print(p + ggtitle("Verizon Wireless QOE by device type") + theme(plot.title = element_text(size=20, face="bold")))
 
 
@@ -48,15 +48,15 @@ device_hotspot <- summaryBy(conf ~ MANUFACTURER + BRAND_MODEL, data=device_qoe, 
 
 
 # K-means plots
-df <- subset(device_plot, NCalls > 12)
-cl <- kmeans(df[,c(3,4)], 6)
+df <- subset(device_plot, NCalls > 15)
+cl <- kmeans(df[,c(4:6)], 6)
 print(summary(cl))
 plot(cl)
 
 x <- df
 x$cluster <- factor(cl$cluster)
 centers <- as.data.frame(cl$centers)
-p <- ggplot(data=x, aes(x = rate611, y= mean.qoe, color=cluster), guide=FALSE) + geom_point(aes(label=BRAND_MODEL)) + geom_point(data=centers, aes(x=rate611,y=mean.qoe, color='Color')) +  geom_text(aes(label=BRAND_MODEL), vjust=1, hjust = 1, size = 5, angle=0) + geom_point(data=centers, aes(x=rate611,y=mean.qoe, color='Center'), size=52, alpha=.3, show_guide=FALSE)
+p <- ggplot(data=x, aes(x = rate611, y= mean.qoe, color=cluster), guide=FALSE) + geom_point(aes(label=BRAND_MODEL)) + geom_point(data=centers, aes(x=rate611,y=mean.qoe, color='Color')) +  geom_text(aes(label=BRAND_MODEL), vjust=1, hjust = 1, size = 5, angle=0) + geom_point(data=centers, aes(x=rate611,y=mean.qoe, color='Center'), size=52, alpha=.3, show_guide=FALSE) + scale_size_area(max_size = 50) + scale_x_continuous(name= "Rate of 611 calls per device type", limits=c(0,2)) + scale_y_continuous(name= "Average Quality of Experience per device type") + theme(legend.position = "none")+ theme(panel.background = element_rect(colour = "pink")) + theme(legend.position = 'none') + guides(fill = guide_legend(keywidth = 9, keyheight = 3))
 print(p + ggtitle('Verizon Wireless Device Hotspot identification for 8/1/15') + theme(plot.title = element_text(size=20, face='bold')))
 
 

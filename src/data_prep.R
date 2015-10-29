@@ -13,12 +13,15 @@ library(penalized)
 library(glmnet)
 library(randomForest)
 library(ROCR)
+library(sqldf)
+library(RSQLite)
 
 # Set R to leverage 14 of the 16 cores available
 doMC::registerDoMC(cores = 4)
 cl <- makeCluster(4)
 registerDoParallel(cl)
 
+### For initial August 1, 2015 slice of data
 # Get device data
 dev <- read.csv(file='~/analytics/pred611/data/export_Dev.csv', header=TRUE, sep=',', stringsAsFactors = FALSE)
 dev <- dev[,1:3]
@@ -31,6 +34,19 @@ ncols <- dim(ds)[2]-5
 attach(ds)
 table(ds, useNA = 'always')
 dim(ds)
+
+### Import data from CSV file for entire study period
+# Setup spirent database as SQLite
+sqlite    <- dbDriver("SQLite")
+spirentDB <- dbConnect(sqlite,"~/analytics/pred611/data/spirent.db")
+
+fpath = '~/analytics/pred611/data/exportKPIS_18to18Jul.csv'
+dbWriteTable(spirentDB, 'pred611JUL', fpath)
+dbGetQuery(spirentDB, "select count(*) from pred611JUL where date_v = '09-JUL-15' group by ")
+
+### Set up table in sqlite3 on disk for daily data over the study period (Aug 2015)
+fpath = '~/analytics/pred611/data/exportKPIS_18to18Jul.csv'
+ds <- read.csv.sql(fpath , sql= "INSERT INTO pred611 select * from file" , dbname= "spirent.pred611", drv= 'SQLite') 
 
 # Generate dummy matrix from 611 Call variable
 tmp <- model.matrix(dummyVars( ~as.factor(DEPT_NM), data = ds))[,-c(1)]
@@ -106,94 +122,3 @@ rm(dat, tmp)
 
 
 # Transformations
-
-# Variables from Adi's model
-allCols       <- names(ds)
-idVars        <- c('CUSTOMER_KEY', 'DEVICE_KEY', 'CELL_KEY')
-modelVars.adi <- c('P168_PCT_PDN_FAILURE', 'P24_PCT_LTE_FAILURE', 'P24_PCT_ATTACH_FAILURE', 'P24_PCT_PDN_FAILURE', 'P168_PCT_SF_OR_FAILURE', 'P168_PCT_FAILURE', 'P168_PCT_CELL_FAILURE', 'P168_PCT_SWITCH_FAILURE', 'P168_PCT_COVERAGE_FAILURE', 'P24_PCT_SF_OR_FAILURE', 'P24_PCT_FAILURE', 'P24_PCT_CELL_FAILURE', 'P24_PCT_SWITCH_FAILURE', 'P24_PCT_COVERAGE_FAILURE', 'target')
-modelVars.PCT <- c(allCols[grepl("PCT", allCols)], 'target')
-modelVars.PCT_MAX <- c(allCols[grepl("PCT", allCols)], allCols[grepl("MAX", allCols)], 'target')
-
-# Split dataset into test & train
-set.seed(3456)
-trainIndex <- createDataPartition(ds$target, p = 0.55, list = FALSE, times = 1)  # the data is too large to compute partitions on, upsample, etc...
-head(trainIndex)
-
-trainSplit  <- ds[ trainIndex,]
-events      <- subset(ds, target == 1)
-nonevents   <- subset(trainSplit, target == 0)
-rownames(events) <- 1:dim(events)[1]
-rownames(nonevents) <- 1:dim(nonevents)[1]
-train.all   <- rbind(events, nonevents[sample(1:dim(events)[1]),])
-prop.table(table(train.all$target)) # Should be a 50/50 split
-
-testSplit   <- ds[-trainIndex[, c(1:95, 104)]
-
-# Adi Final Model list 
-# set.seed(434567)
-# n = 2500
-# sample.event     <- sample(1:n) 
-# sample.nonevent  <- sample(1:n)
-# ind <- sample.event
-# events.adi    <- cbind(events[sample.event, c(modelVars.PCT, idVars)], ind)
-# ind <- sample.nonevent
-# nonevents.adi <- cbind(nonevents[sample.nonevent, c(modelVars.PCT, idVars)], ind)
-# train.adi     <- rbind(events.adi, nonevents.adi)
-
-##  Modeling phase
-
-getModelFrame <- function(sampleN, events_ds=events, nonevents_ds=nonevents, model_Vars, id_Vars=idVars) {
-  n <- sampleN
-  sample.event     <- sample(1:n) 
-  sample.nonevent  <- sample(1:n)
-  ind              <- sample.event
-  events.1         <- cbind(events_ds[sample.event, c(model_Vars, id_Vars)], ind)
-  ind              <- sample.nonevent
-  nonevents.0      <- cbind(nonevents_ds[sample.nonevent, c(model_Vars, id_Vars)], ind)
-  train            <- rbind(events.1, nonevents.0)
-
-  print(prop.table(table(events.adi$target, useNA='always')))
-  print(prop.table(table(nonevents.adi$target, useNA='always')))
-  print(prop.table(table(train.adi$target, useNA='always'))) # Should be a 50/50 split
-  
-  return(train)
-}
-
-ts <- getModelFrame(sampleN=5000, model_Vars=modelVars.PCT_MAX)
-
-# Random Forest model following Adi's specification.  Tree size is 500.
-# With 5000 samples
-# Results : Accuracy ~ 
-rf_adi.5k <- randomForest(as.factor(target) ~. , data=train.adi[, -c(18:21)], importance=TRUE, proximity=TRUE)  # Accuracy rate of 62%, 81% 
-sum(rf_adi.5k$confusion[c(1,4)])/sum(rf_adi.5k$confusion)
-
-rf_adi.5ak <- randomForest(as.factor(target) ~. , data=train.adi[, -c(18:21)], ntrees=1000, importance=TRUE, proximity=TRUE)  # Accuracy rate of 62%, 81% 
-sum(rf_adi.5ak$confusion[c(1,4)])/sum(rf_adi.5ak$confusion)
-
-# With 10k samples
-rf_adi.10k <- randomForest(as.factor(target) ~. , data=train.adi, importance=TRUE, proximity=TRUE) # Accuracy rate of 76%
-sum(rf_adi.10k$confusion[c(1,4)])/sum(rf_adi.10k$confusion)
-
-# With 20k samples
-rf_adi.20k <- randomForest(as.factor(target) ~. , data=ts[,-c(18:21)], importance=TRUE, proximity=TRUE) # Accuracy rate of ??
-sum(rf_adi.20k$confusion[c(1,4)])/sum(rf_adi.20k$confusion)
-
-# Oversample on training set
-trainSplit$target.factor <- as.factor(trainSplit$target)
-trainSplit <- SMOTE(target.factor ~ ., trainSplit, perc.over = 200, perc.under= 200)
-prop.table(table(trainSplit$target))
-
-
-# Generate S-Curves by response class
-getSCurve <- function(rf) {
-  results <- data.frame(conf=rf$votes[,1]*4+1, CALLED_611= rf$y)
-  n=nrow(results)/2
-  print(n)
-  no    <- data.frame(pctile = (1:n)/100, Called_611= rep('No', n), qoe=sort(results$conf[results$CALLED_611 == 0]))
-  yes   <- data.frame(pctile = (1:n)/100, Called_611= rep('Yes', n), qoe=sort(results$conf[results$CALLED_611 == 1]))
-  df_gg <- rbind(yes, no)
-  p     <- ggplot(data=df_gg, aes(x=pctile, y=qoe, group=Called_611)) + geom_line(aes(colour=Called_611)) + scale_x_continuous(breaks=round(seq(0,100, by=5))) + scale_y_continuous(breaks=seq(-1,6, by=0.5))
-  print(p) 
-  
-  return(results)
-}
