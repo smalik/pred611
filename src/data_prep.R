@@ -15,11 +15,34 @@ library(randomForest)
 library(ROCR)
 library(sqldf)
 library(RSQLite)
+library(FactoMineR)
 
 # Set R to leverage 14 of the 16 cores available
 doMC::registerDoMC(cores = 4)
 cl <- makeCluster(4)
 registerDoParallel(cl)
+
+
+##  Functions to set data up into SQL and make accessible to R 
+data2SQL <- function(db_path, file_path, tableName) {
+  s_time  <- proc.time()
+  sqlite    <- dbDriver("SQLite")
+  spirentDB <- dbConnect(sqlite,db_path)
+  dbWriteTable(spirentDB, tableName, file_path)
+  print("Time taken to query: ")
+  print(proc.time()-s_time)
+}
+
+# Function to get one day of data
+getDayData <- function(date_val, tableName) {
+  s_time  <- proc.time()
+  sql_str <- paste("select * from", tableName, "where date_v =", date_val)
+  data    <- dbGetQuery(spirentDB, sql_str)
+
+  print("Time taken to query: ")
+  print(proc.time()-s_time)
+  return(data)
+}
 
 ### For initial August 1, 2015 slice of data
 # Get device data
@@ -35,71 +58,31 @@ attach(ds)
 table(ds, useNA = 'always')
 dim(ds)
 
-### Import data from CSV file for entire study period
-# Setup spirent database as SQLite
-sqlite    <- dbDriver("SQLite")
-spirentDB <- dbConnect(sqlite,"~/analytics/pred611/data/spirent.db")
+## Set up table in sqlite3 on disk for daily data over the study period
+dbp <- "~/analytics/pred611/data/spirent.db"
+fp  <- '~/analytics/pred611/data/exportKPIS_18to18Jul.csv'
+data2SQL(db_path = dbp, file_path = fp, tableName = 'pred611JUL')
 
-fpath = '~/analytics/pred611/data/exportKPIS_18to18Jul.csv'
-dbWriteTable(spirentDB, 'pred611JUL', fpath)
-dbGetQuery(spirentDB, "select count(*) from pred611JUL where date_v = '09-JUL-15' group by ")
+##  Get target variable
+fp <- '~/analytics/pred611/data/export_61108to18Jul.csv'
+data2SQL(db_path = dbp, file_path = fp, tableName = 'target611JUL')
+target_611 <- dbGetQuery(spirentDB, 'select * from target611JUL')
+colnames(target_611)[1] <- 'CUSTOMER_KEY'
+target_611$DATE_V <- substring(target_611$CALL_ANSWER_DT, 1,9)
+target_611$CALL_ANSWER_DT <- NULL
+colnames(target_611)[2]   <- 'DEPT_NM'
 
-### Set up table in sqlite3 on disk for daily data over the study period (Aug 2015)
-fpath = '~/analytics/pred611/data/exportKPIS_18to18Jul.csv'
-ds <- read.csv.sql(fpath , sql= "INSERT INTO pred611 select * from file" , dbname= "spirent.pred611", drv= 'SQLite') 
+# Get one day of data from the study period
+rm(ds)
+date_v <- "'15-JUL-15'"
+ds <- getDayData(date_v, 'pred611JUL')
 
-# Generate dummy matrix from 611 Call variable
-tmp <- model.matrix(dummyVars( ~as.factor(DEPT_NM), data = ds))[,-c(1)]
-tmp <- as.data.frame(tmp)
-names(tmp) <- c('Care', 'LNP', 'Non611', 'Other', 'Tech')
-
-# What is the mean  of 611 incidents per disposition?
-laply(tmp[,c('Care', 'LNP', 'Non611', 'Other', 'Tech')], sum, .parallel = TRUE) # (56422      200 11490568      352    11650)
-laply(tmp[,c('Care', 'LNP', 'Non611', 'Other', 'Tech')], mean, .parallel = TRUE)*100 # expressed as pct::  (0.48799094  0.00172979 99.38132346  0.00304443  0.10076024)
-
-# Generate new target variable from dummy matrix
-targetVar_cnt     <- rep(0, nrows)
-targetVar_binary  <- rep(0, nrows)
-
-# Variable for count data modeling
-targetVar_cnt     <- parRapply(cl, tmp[, -c(3)], sum)
-
-# Variable for dichotomous response model
-targetVar_binary  <- parRapply(cl, tmp[, -c(3)], max)
-
-# Check counts
-table(targetVar_cnt)
-table(targetVar_binary)
-
-# Counts dont line up...why?
-#     targetVar_binary
-#     0           1 
-#     11493476    68624 
-#     
-#     targetVar_cnt   //Not useful.  No counts
-#     0           1 
-#     11493476    68624 
-
-# Checking for why:
-foreach(1:ncols) %dopar% { x<- sum(tmp[i,]); if(x>1) print(i)}  # All rows sum to 1.  No mistake here
-foreach(i:length(targetVar_cnt)) %dopar% {if(targetVar_binary[i]>1) print(i)} # All rows are 0/1.  No mistake here
-
-# Lets plot new target variables
-boxplot(targetVar_binary)
-
-
-# Summary statistics and density plots on columns w.r.t target variable
-foreach(i = 1:2) %do% {
-  print(paste0(i, "- Variable name: ", names(ds)[i]))
-  print("------------------------------------------------------")
-  s <- summary(ds[,i])
-  print(s)
-  print("------------------------------------------------------")
-  if (s[6] > 1) {
-    dat <- data.frame(col1= ds[,i], col2=targetVar_binary)
-    ggplot(dat, aes(x=dat[,1])) + geom_density(aes(group=targetVar_binary, colour=targetVar_binary, fill=targetVar_binary), alpha=0.3) 
-  }
-}
+# Merge target variable onto predictor dataset by customer and day columns
+system.time(ds  <- merge(x  = ds, y = target_611, by = c('CUSTOMER_KEY', 'DATE_V'), all.x = TRUE))
+table(ds$DEPT_NM)
+dim(ds)
+rm(target_611)
+attach(ds)
 
 
 #   Variables that need recoding or alternative handling
@@ -114,11 +97,12 @@ ds[is.na(ds[, c('P24_PCT_ATTACH_FAILURE')]), c('P24_PCT_ATTACH_FAILURE')]  <- 0
 ds[is.na(ds[, c('P24_PCT_PDN_FAILURE')]), c('P24_PCT_PDN_FAILURE')]     <- 0
 
 # Join dummy variable dataset onto feature set
-target  <- targetVar_binary
-ds    <- cbind(ds, tmp, target)
+target  <- unlist(mclapply(DEPT_NM, function(x) {return(!is.na(x))}))
+ds$DEPT_NM <- NULL
+ds$LTE_DATE_HOUR <- NULL
+ds$DATE_HOUR <- NULL
+ds    <- cbind(ds, target)
 dim(ds)
 names(ds)
-rm(dat, tmp)
-
 
 # Transformations

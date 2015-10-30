@@ -11,9 +11,9 @@ getModelFrame <- function(sampleN, events_ds=events, nonevents_ds=nonevents, mod
   nonevents.0      <- cbind(nonevents_ds[sample.nonevent, c(model_Vars, id_Vars)], ind)
   train            <- rbind(events.1, nonevents.0)
   
-  print(prop.table(table(events.adi$target, useNA='always')))
-  print(prop.table(table(nonevents.adi$target, useNA='always')))
-  print(prop.table(table(train.adi$target, useNA='always'))) # Should be a 50/50 split
+  print(prop.table(table(events.1$target, useNA='always')))
+  print(prop.table(table(nonevents.0$target, useNA='always')))
+  print(prop.table(table(train$target, useNA='always'))) # Should be a 50/50 split
   
   return(train)
 }
@@ -35,7 +35,7 @@ getSCurve <- function(rf) {
 
 # Variables from Adi's model
 allCols       <- names(ds)
-idVars        <- c('CUSTOMER_KEY', 'DEVICE_KEY', 'CELL_KEY')
+idVars        <- c('CUSTOMER_KEY', 'DEVICE_KEY')
 modelVars.adi <- c('P168_PCT_PDN_FAILURE', 'P24_PCT_LTE_FAILURE', 'P24_PCT_ATTACH_FAILURE', 'P24_PCT_PDN_FAILURE', 'P168_PCT_SF_OR_FAILURE', 'P168_PCT_FAILURE', 'P168_PCT_CELL_FAILURE', 'P168_PCT_SWITCH_FAILURE', 'P168_PCT_COVERAGE_FAILURE', 'P24_PCT_SF_OR_FAILURE', 'P24_PCT_FAILURE', 'P24_PCT_CELL_FAILURE', 'P24_PCT_SWITCH_FAILURE', 'P24_PCT_COVERAGE_FAILURE', 'target')
 modelVars.PCT <- c(allCols[grepl("PCT", allCols)], 'target')
 modelVars.PCT_MAX <- c(allCols[grepl("PCT", allCols)], allCols[grepl("MAX", allCols)], 'target')
@@ -53,39 +53,31 @@ rownames(nonevents) <- 1:dim(nonevents)[1]
 train.all   <- rbind(events, nonevents[sample(1:dim(events)[1]),])
 prop.table(table(train.all$target)) # Should be a 50/50 split
 
-testSplit   <- ds[-trainIndex[, c(1:95, 104)]
+rm(events, nonevents, ds)
+
+testSplit   <- ds[-trainIndex[, modelVars.PCT]]
                   
-# Adi Final Model list 
-# set.seed(434567)
-# n = 2500
-# sample.event     <- sample(1:n) 
-# sample.nonevent  <- sample(1:n)
-# ind <- sample.event
-# events.adi    <- cbind(events[sample.event, c(modelVars.PCT, idVars)], ind)
-# ind <- sample.nonevent
-# nonevents.adi <- cbind(nonevents[sample.nonevent, c(modelVars.PCT, idVars)], ind)
-# train.adi     <- rbind(events.adi, nonevents.adi)
 
 ##  Modeling phase
 
 
-ts <- getModelFrame(sampleN=5000, model_Vars=modelVars.PCT_MAX)
+ts <- getModelFrame(sampleN=10000, model_Vars=modelVars.PCT)
 
 # Random Forest model following Adi's specification.  Tree size is 500.
 # With 5000 samples
 # Results : Accuracy ~ 
-rf_adi.5k <- randomForest(as.factor(target) ~. , data=train.adi[, -c(18:21)], importance=TRUE, proximity=TRUE)  # Accuracy rate of 62%, 81% 
-sum(rf_adi.5k$confusion[c(1,4)])/sum(rf_adi.5k$confusion)
-saveRDS(rf_adi.5k, file = "~/analytics/pred611/models/rf_adi.5k.RModel", ascii = FALSE, version = NULL, compress = TRUE, refhook = NULL)
+rf_0715.5k <- randomForest(as.factor(target) ~. , data=ts[, -c(18:20)], importance=TRUE, proximity=TRUE)  # Accuracy rate of 62%, 81% 
+sum(rf_0715.5k$confusion[c(1,4)])/sum(rf_0715.5k$confusion)
+saveRDS(rf_0715.5k, file = "~/analytics/pred611/models/rf_0715.5k.RModel", ascii = FALSE, version = NULL, compress = TRUE, refhook = NULL)
 
-rf_adi.5ak <- randomForest(as.factor(target) ~. , data=train.adi[, -c(18:21)], ntrees=1000, importance=TRUE, proximity=TRUE)  # Accuracy rate of 62%, 81% 
-sum(rf_adi.5ak$confusion[c(1,4)])/sum(rf_adi.5ak$confusion)
-saveRDS(rf_adi.5ak, file = "~/analytics/pred611/models/rf_adi.5ak.RModel", ascii = FALSE, version = NULL, compress = TRUE, refhook = NULL)
+rf_0715.5ak <- randomForest(as.factor(target) ~. , data=ts[, -c(18:20)], ntrees=1000, mtry=4, importance=TRUE, proximity=TRUE)  # Accuracy rate of 62%, 81% 
+sum(rf_0715.5ak$confusion[c(1,4)])/sum(rf_0715.5ak$confusion)
+saveRDS(rf_0715.5ak, file = "~/analytics/pred611/models/rf_0715.5ak.RModel", ascii = FALSE, version = NULL, compress = TRUE, refhook = NULL)
 
 # With 10k samples
-rf_adi.10k <- randomForest(as.factor(target) ~. , data=train.adi, importance=TRUE, proximity=TRUE) # Accuracy rate of 76%
-sum(rf_adi.10k$confusion[c(1,4)])/sum(rf_adi.10k$confusion)
-saveRDS(rf_adi.10k, file = "~/analytics/pred611/models/rf_adi.10k.RModel", ascii = FALSE, version = NULL, compress = TRUE, refhook = NULL)
+rf_0715.10k <- randomForest(as.factor(target) ~. , data=ts[,-c(18:20)], importance=TRUE, proximity=TRUE) # Accuracy rate of 76%
+sum(rf_0715.10k$confusion[c(1,4)])/sum(rf_0715.10k$confusion)
+saveRDS(rf_0715.10k, file = "~/analytics/pred611/models/rf_0715.10k.RModel", ascii = FALSE, version = NULL, compress = TRUE, refhook = NULL)
 
 # With 20k samples
 rf_adi.20k <- randomForest(as.factor(target) ~. , data=ts[,-c(18:21)], importance=TRUE, proximity=TRUE) # Accuracy rate of ??
