@@ -3,7 +3,7 @@
 results.5 <- getSCurve(rf_adi.5k)
 results.10 <- getSCurve(rf_adi.10k)
 results.20 <- getSCurve(rf_adi.20k)
-device_qoe <- cbind(results.20, train.adi[,c(18:20)])
+device_qoe <- cbind(results, ts[,c(18:20)])
 device_qoe$is611 <- as.numeric(as.character(device_qoe$CALLED_611))
 device_qoe <- merge(x=device_qoe, y=dev, by='DEVICE_KEY', all.x=TRUE)
 device_qoe <- ddply(device_qoe, c('MANUFACTURER', 'BRAND_MODEL'), summarise, NCalls=length(CALLED_611), mean.qoe=mean(conf), sd.qoe=sd(conf))
