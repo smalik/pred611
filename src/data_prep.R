@@ -22,66 +22,74 @@ doMC::registerDoMC(cores = 4)
 cl <- makeCluster(4)
 registerDoParallel(cl)
 
+# Read in functions from functions.R file
+source('src/functions.R')
 
-# Get device data
-dev <- read.csv(file='~/analytics/pred611/data/export_Dev.csv', header=TRUE, sep=',', stringsAsFactors = FALSE)
-dev <- dev[,1:3]
-colnames(dev)[1] <- 'DEVICE_KEY'
-
-##  Functions to set data up into SQL and make accessible to R 
-data2SQL <- function(db_path, file_path, tableName) {
-  s_time  <- proc.time()
-  sqlite    <- dbDriver("SQLite")
-  spirentDB <- dbConnect(sqlite,db_path)
-  dbWriteTable(spirentDB, tableName, file_path)
-  print("Time taken to query: ")
-  print(proc.time()-s_time)
-}
-
-# Function to get one day of data
-getDayData <- function(date_val, tableName) {
-  s_time  <- proc.time()
-  sql_str <- paste("select * from ", tableName, " where date_v = ", date_val, sep='')
-  print(sql_str)
-  data    <- dbGetQuery(spirentDB, sql_str)
-
-  print("Time taken to query: ")
-  print(proc.time()-s_time)
-  return(data)
-}
-
-# Run once to create permanent dataset in SQL tables
-fp  <- '~/analytics/pred611/data/exportKPIS_18to18Jul.csv'
-tableName <- 'pred611JUL'
-data2SQL(db_path = db_path, file_path = fp, tableName = tableName)
+# Do you have any data to build?
+runOnce <- TRUE
 
 ## Set up table in sqlite3 on disk for daily data over the study period
 dbp <- "~/analytics/pred611/data/spirent.db"
 sqlite    <- dbDriver("SQLite")
 spirentDB <- dbConnect(sqlite,dbp)
 
-##  Get target variable
-fp <- '~/analytics/pred611/data/export_61108to18Jul.csv'
-data2SQL(db_path = dbp, file_path = fp, tableName = 'target611JUL')
-target_611 <- dbGetQuery(spirentDB, 'select * from target611JUL')
+# Get device data
+ tableName <- 'devices'
+data2SQL(spirentDB, file_path = 'data/device_files/Part1', tableName = tableName)
+
+for( i in 2:347) {
+  path <- paste('data/device_files/Part', i, sep='')
+  print(path)
+  print(paste('Appending file: Part', i, '...'))
+  system.time(data2SQL(spirentDB, file_path = path, tableName = tableName, append_data = TRUE))
+}
+
+for( i in 1:43) {
+  path <- paste('data/device_files/part347/Part', i, sep='')
+  print(path)
+  print(paste('Appending file: Part', i, '...'))
+  system.time(data2SQL(spirentDB, file_path = path, tableName = tableName, append_data = TRUE))
+}
+cols <- names(dbGetQuery(spirentDB, 'select * from devices limit 1'))
+
+if(runOnce = TRUE) {
+  # Run once to create permanent dataset in SQL tables with all KPI data for study period
+  fp  <- '~/analytics/pred611/data/exportKPIS_18to18Jul.csv'
+  tableName <- 'pred611'
+  data2SQL(dbn= spirentDB, file_path = fp, tableName = tableName)
+  dbSendQuery(spirentDB, "DELETE FROM pred611 where date_v = '19-JUL-15'")
+  
+  fp  <- '~/analytics/pred611/data/export19julto22jul_fullkpi.csv'
+  system.time(data2SQL(dbn= spirentDB, file_path = fp, tableName = tableName, append_data = TRUE))
+  
+  
+  ##  Get target variable
+  tableName <- 'target611'
+  fp <- '~/analytics/pred611/data/export_61108to18Jul.csv'
+  data2SQL(dbn = spirentDB, file_path = fp, tableName = tableName)
+  fp <- '~/analytics/pred611/data/export611data_19to22Jul.csv'
+  system.time(data2SQL(dbn = spirentDB, file_path = fp, tableName = tableName, append_data = TRUE))
+}
+
+# Clean up 
+target_611 <- dbGetQuery(spirentDB, 'select * from target611')
 colnames(target_611)[1] <- 'CUSTOMER_KEY'
 target_611$DATE_V <- substring(target_611$CALL_ANSWER_DT, 1,9)
 target_611$CALL_ANSWER_DT <- NULL
 colnames(target_611)[2]   <- 'DEPT_NM'
 
 # Build dataset for periods of interest one day at a time
-ds.dates <- dbGetQuery(spirentDB, 'select distinct(DATE_V) from pred611JUL')
+ds.dates <- dbGetQuery(spirentDB, 'select distinct(DATE_V) from pred611')
 buildDaySet <- function(day) {
 
   # Get one day of data from the study period
-  ds <- getDayData(day, 'pred611JUL')
+  ds <- getDayData(day, 'pred611')
 
   # Merge target variable onto predictor dataset by customer and day columns
   system.time(ds  <- merge(x  = ds, y = target_611, by = c('CUSTOMER_KEY', 'DATE_V'), all.x = TRUE))
   table(ds$DEPT_NM)
   dim(ds)
-  attach(ds)
-  
+
   #   Variables that need recoding or alternative handling
   ds[is.na(ds[, c('P168_PCT_ATTACH_FAILURE')]), c('P168_PCT_ATTACH_FAILURE')] <- 0
   ds[is.na(ds[, c('P168_PCT_PDN_FAILURE')]), c('P168_PCT_PDN_FAILURE')]    <- 0
@@ -89,7 +97,7 @@ buildDaySet <- function(day) {
   ds[is.na(ds[, c('P24_PCT_PDN_FAILURE')]), c('P24_PCT_PDN_FAILURE')]     <- 0
   
   # Join dummy variable dataset onto feature set
-  target  <- unlist(mclapply(DEPT_NM, function(x) {return(!is.na(x))}))
+  target  <- unlist(mclapply(ds$DEPT_NM, function(x) {return(!is.na(x))}))
   ds$DEPT_NM <- NULL
   ds$LTE_DATE_HOUR <- NULL
   ds$DATE_HOUR <- NULL

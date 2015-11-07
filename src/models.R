@@ -108,7 +108,7 @@ generateHotspots <- function(rf, sampleSet) {
 }
 
 ##  Modeling phase
-for(i in ds.dates[7:11,]) {
+for(i in ds.dates[13,]) {
   id      <- paste('rf_', substr(i, 4,6), substr(i,1,2), sep='')
   print(paste("Processing Model: ", id))
   ds      <- buildDaySet(paste("'",i,"'", sep=''))
