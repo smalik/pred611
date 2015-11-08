@@ -84,31 +84,31 @@ getSCurve <- function(rf) {
 }
 
 # Generate Hotspots
-generateHotspots <- function(rf, sampleSet) {
-  results <- getSCurve(rf)
-  device_qoe <- cbind(results, sampleSet[,c('CUSTOMER_KEY', 'DEVICE_KEY')])
-  device_qoe$is611 <- 1*(as.logical(device_qoe$CALLED_611))
-  device_qoe <- merge(x=device_qoe, y=dev, by='DEVICE_KEY', all.x=TRUE)
-  device_qoe <- ddply(device_qoe, c('MANUFACTURER', 'BRAND_MODEL'), summarise, NCalls=length(CALLED_611), mean.qoe=mean(conf), sd.qoe=sd(conf))
-
-  device_all <- ds[,c('CUSTOMER_KEY', 'DEVICE_KEY', 'target')]
-  device_all <- merge(x=device_all, y=dev, by='DEVICE_KEY', all.x=TRUE)
-  device_all <- ddply(device_all, c('MANUFACTURER', 'BRAND_MODEL'), summarise, tot.dev=NROW(target), tot.611=sum(target))
-  device_all$rate611 <- 100*(device_all$tot.611/device_all$tot.dev)
-  
-  device_plot <- merge(x=device_qoe, y=device_all[,c('MANUFACTURER', 'BRAND_MODEL', 'rate611')], by=c('MANUFACTURER', 'BRAND_MODEL'), all.x=TRUE)
-  # eliminate very high and very garbage device counts
-  #  device_plot <- device_plot[-c(9,34,81,84:85,87,90),]
-  
-  # The actual plot
-  p <- ggplot(subset(device_plot, NCalls > 15), aes(y=(mean.qoe), x=rate611, label=BRAND_MODEL, alpha=0.7)) + geom_point(aes(colour=NCalls, size=NCalls)) +  geom_text(vjust=1, hjust = 1, size = 5, angle=0) + scale_size_area(max_size = 50) + scale_x_continuous(name= "Rate of 611 calls per device type", limits=c(0,2)) + scale_y_continuous(name= "Average Quality of Experience per device type") + theme(legend.position = "none")+ theme(panel.background = element_rect(colour = "pink")) + theme(legend.position = 'none') + guides(fill = guide_legend(keywidth = 9, keyheight = 3)) + stat_smooth(method='lm', level=.95)
-  print(p + ggtitle("Verizon Wireless QOE by device type") + theme(plot.title = element_text(size=20, face="bold")))
-
-  return(device_plot)  
-}
+# generateHotspots <- function(rf, sampleSet) {
+#   results <- getSCurve(rf)
+#   device_qoe <- cbind(results, sampleSet[,c('CUSTOMER_KEY', 'DEVICE_KEY')])
+#   device_qoe$is611 <- 1*(as.logical(device_qoe$CALLED_611))
+#   device_qoe <- merge(x=device_qoe, y=dev, by='DEVICE_KEY', all.x=TRUE)
+#   device_qoe <- ddply(device_qoe, c('MANUFACTURER', 'BRAND_MODEL'), summarise, NCalls=length(CALLED_611), mean.qoe=mean(conf), sd.qoe=sd(conf))
+# 
+#   device_all <- ds[,c('CUSTOMER_KEY', 'DEVICE_KEY', 'target')]
+#   device_all <- merge(x=device_all, y=dev, by='DEVICE_KEY', all.x=TRUE)
+#   device_all <- ddply(device_all, c('MANUFACTURER', 'BRAND_MODEL'), summarise, tot.dev=NROW(target), tot.611=sum(target))
+#   device_all$rate611 <- 100*(device_all$tot.611/device_all$tot.dev)
+#   
+#   device_plot <- merge(x=device_qoe, y=device_all[,c('MANUFACTURER', 'BRAND_MODEL', 'rate611')], by=c('MANUFACTURER', 'BRAND_MODEL'), all.x=TRUE)
+#   # eliminate very high and very garbage device counts
+#   #  device_plot <- device_plot[-c(9,34,81,84:85,87,90),]
+#   
+#   # The actual plot
+#   p <- ggplot(subset(device_plot, NCalls > 15), aes(y=(mean.qoe), x=rate611, label=BRAND_MODEL, alpha=0.7)) + geom_point(aes(colour=NCalls, size=NCalls)) +  geom_text(vjust=1, hjust = 1, size = 5, angle=0) + scale_size_area(max_size = 50) + scale_x_continuous(name= "Rate of 611 calls per device type", limits=c(0,2)) + scale_y_continuous(name= "Average Quality of Experience per device type") + theme(legend.position = "none")+ theme(panel.background = element_rect(colour = "pink")) + theme(legend.position = 'none') + guides(fill = guide_legend(keywidth = 9, keyheight = 3)) + stat_smooth(method='lm', level=.95)
+#   print(p + ggtitle("Verizon Wireless QOE by device type") + theme(plot.title = element_text(size=20, face="bold")))
+# 
+#   return(device_plot)  
+# }
 
 ##  Modeling phase
-for(i in ds.dates[13,]) {
+for(i in ds.dates[10,]) {
   id      <- paste('rf_', substr(i, 4,6), substr(i,1,2), sep='')
   print(paste("Processing Model: ", id))
   ds      <- buildDaySet(paste("'",i,"'", sep=''))
@@ -149,7 +149,7 @@ for(i in ds.dates[13,]) {
   results <- getSCurve(rf)
 
   # Find hotspots
-  hotspot   <- generateHotspots(rf, ts)
+  hotspot   <- generateHotspots(rf, ts, dev='devices_tmp', day=i)
   
   model     <- list()
   model$id  <- id

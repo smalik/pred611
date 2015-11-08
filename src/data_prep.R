@@ -26,31 +26,36 @@ registerDoParallel(cl)
 source('src/functions.R')
 
 # Do you have any data to build?
-runOnce <- TRUE
+runOnce <- FALSE
+importDeviceData <- FALSE
 
 ## Set up table in sqlite3 on disk for daily data over the study period
-dbp <- "~/analytics/pred611/data/spirent.db"
+# dbp <- "~/analytics/pred611/data/spirent.db"
+dbp <- '~/Documents/spirent.db'
 sqlite    <- dbDriver("SQLite")
 spirentDB <- dbConnect(sqlite,dbp)
 
-# Get device data
- tableName <- 'devices'
-data2SQL(spirentDB, file_path = 'data/device_files/Part1', tableName = tableName)
-
-for( i in 2:347) {
-  path <- paste('data/device_files/Part', i, sep='')
-  print(path)
-  print(paste('Appending file: Part', i, '...'))
-  system.time(data2SQL(spirentDB, file_path = path, tableName = tableName, append_data = TRUE))
+# Import device data into database
+if(importDeviceData) {
+  tableName <- 'devices'
+  data2SQL(spirentDB, file_path = 'data/device_files/Part1', tableName = tableName)
+  
+  for( i in 2:347) {
+    path <- paste('data/device_files/Part', i, sep='')
+    print(path)
+    print(paste('Appending file: Part', i, '...'))
+    system.time(data2SQL(spirentDB, file_path = path, tableName = tableName, append_data = TRUE))
+  }
+  
+  for( i in 1:43) {
+    path <- paste('data/device_files/part347/Part', i, sep='')
+    print(path)
+    print(paste('Appending file: Part', i, '...'))
+    system.time(data2SQL(spirentDB, file_path = path, tableName = tableName, append_data = TRUE))
+  }
+  cols <- names(dbGetQuery(spirentDB, 'select * from devices limit 1'))
 }
 
-for( i in 1:43) {
-  path <- paste('data/device_files/part347/Part', i, sep='')
-  print(path)
-  print(paste('Appending file: Part', i, '...'))
-  system.time(data2SQL(spirentDB, file_path = path, tableName = tableName, append_data = TRUE))
-}
-cols <- names(dbGetQuery(spirentDB, 'select * from devices limit 1'))
 
 if(runOnce = TRUE) {
   # Run once to create permanent dataset in SQL tables with all KPI data for study period
